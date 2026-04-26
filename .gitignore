@@ -1,0 +1,43 @@
+# Ignore files for Jam with NVDA
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyc
+*.pyo
+*.pyd
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Virtual environments
+venv/
+env/
+ENV/
+venv.bak/
+
+# IDEs
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs and runtime files
+*.log
+jam_debug.log
+
+# NVDA/addon artifacts
+*.nvda-addon
+
+# Binaries
+globalPlugins/jam_with_nvda/*.dll
+
+# Secrets
+.env
