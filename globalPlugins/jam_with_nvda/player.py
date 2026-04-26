@@ -1,6 +1,25 @@
 import ctypes
 import os
+import logging
 import ui
+
+# Setup Logging
+LOG_DIR = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Jam_with_NVDA")
+LOG_FILE = os.path.join(LOG_DIR, "jam_debug.log")
+
+try:
+	if not os.path.exists(LOG_DIR):
+		os.makedirs(LOG_DIR)
+	logging.basicConfig(
+		filename=LOG_FILE,
+		level=logging.DEBUG,
+		format="%(asctime)s - %(levelname)s - %(message)s",
+	)
+except (IOError, OSError):
+	# If logging fails, we don't want to crash the whole add-on
+	pass
+
+logger = logging.getLogger("JamWithNVDA")
 
 # Constants for BASS
 BASS_UNICODE = 0x80000000
@@ -30,18 +49,24 @@ class MusicPlayer:
 		dll_path = os.path.join(os.path.dirname(__file__), dll_name)
 
 		if not os.path.exists(dll_path):
-			ui.message("Audio engine files missing")
+			logger.error(f"Audio engine files missing at {dll_path}")
 			return False
 
 		try:
 			self._bass = ctypes.CDLL(dll_path)
 			self._setup_prototypes()
 			# Initialize BASS (-1 = default device, 44100Hz)
+			# Error code 14 is BASS_ERROR_ALREADY, which we can treat as success
 			if self._bass.BASS_Init(-1, 44100, 0, None, None) or self._bass.BASS_ErrorGetCode() == 14:
 				self._initialized = True
+				logger.info("BASS initialized successfully")
 				return True
-		except Exception as e:
-			ui.message(f"Audio engine error: {e}")
+			else:
+				logger.error(f"BASS_Init failed with error code: {self._bass.BASS_ErrorGetCode()}")
+		except OSError as e:
+			logger.error(f"Failed to load BASS DLL: {e}")
+		except RuntimeError as e:
+			logger.error(f"Runtime error during BASS initialization: {e}")
 		return False
 
 	def _setup_prototypes(self):
@@ -135,21 +160,48 @@ class MusicPlayer:
 		if not self._initialized:
 			if not self._load_bass():
 				return False, "Engine not ready"
+		
+		# Strict Path Validation
+		if not os.path.isfile(file_path):
+			logger.error(f"File not found: {file_path}")
+			return False, "File not found"
+		if not os.access(file_path, os.R_OK):
+			logger.error(f"File not readable: {file_path}")
+			return False, "File not readable"
+		
+		supported_extensions = ('.mp3', '.wav', '.ogg', '.flac', '.m4a', '.wma')
+		if not file_path.lower().endswith(supported_extensions):
+			logger.error(f"Unsupported file format: {file_path}")
+			return False, "Unsupported format"
+
 		self.stop()
-		path_ptr = ctypes.c_wchar_p(file_path)
-		self._handle = self._bass.BASS_StreamCreateFile(False, path_ptr, 0, 0, BASS_UNICODE)
-		if self._handle == 0:
-			return False, f"Error {self._bass.BASS_ErrorGetCode()}"
-		self.set_volume(volume)
-		if self._bass.BASS_ChannelPlay(self._handle, False):
-			return True, ""
-		return False, "Playback failed"
+		try:
+			path_ptr = ctypes.c_wchar_p(file_path)
+			self._handle = self._bass.BASS_StreamCreateFile(False, path_ptr, 0, 0, BASS_UNICODE)
+			if self._handle == 0:
+				error_code = self._bass.BASS_ErrorGetCode()
+				logger.error(f"BASS_StreamCreateFile failed for {file_path} with error {error_code}")
+				return False, f"Error {error_code}"
+			self.set_volume(volume)
+			if self._bass.BASS_ChannelPlay(self._handle, False):
+				logger.info(f"Started playing: {file_path}")
+				return True, ""
+			else:
+				logger.error(f"BASS_ChannelPlay failed for {file_path}")
+				return False, "Playback failed"
+		except (IOError, OSError, RuntimeError) as e:
+			logger.error(f"Exception in play_file: {e}")
+			return False, str(e)
 
 	def pause(self):
-		return self._bass.BASS_ChannelPause(self._handle) if self._handle else False
+		if not self._handle:
+			return False
+		return self._bass.BASS_ChannelPause(self._handle)
 
 	def resume(self):
-		return self._bass.BASS_ChannelPlay(self._handle, False) if self._handle else False
+		if not self._handle:
+			return False
+		return self._bass.BASS_ChannelPlay(self._handle, False)
 
 	def stop(self):
 		if self._handle:
@@ -159,9 +211,20 @@ class MusicPlayer:
 		return False
 
 	def free(self):
+		"""Ensures all BASS resources are released properly."""
 		if self._initialized:
-			if self._handle:
-				self._bass.BASS_StreamFree(self._handle)
-				self._handle = 0
-			self._bass.BASS_Free()
-			self._initialized = False
+			try:
+				if self._handle:
+					self._bass.BASS_StreamFree(self._handle)
+					self._handle = 0
+				self._bass.BASS_Free()
+				logger.info("BASS resources freed")
+			except (IOError, OSError, RuntimeError) as e:
+				logger.error(f"Error freeing BASS resources: {e}")
+			finally:
+				self._initialized = False
+				self._bass = None
+
+	def __del__(self):
+		"""Destructor to ensure resources are freed when object is destroyed."""
+		self.free()

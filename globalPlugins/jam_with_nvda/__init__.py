@@ -5,6 +5,7 @@ import ui
 import wx
 import gui
 from . import player
+from .player import logger
 
 def format_time(seconds):
 	"""Converts seconds into MM:SS format."""
@@ -110,7 +111,7 @@ class JamDialog(wx.Dialog):
 						return
 			
 			event.Skip()
-		except Exception:
+		except (wx.PyDeadObjectError, wx.PyAssertionError):
 			event.Skip()
 
 	def onSeek(self, offset):
@@ -180,7 +181,7 @@ class JamDialog(wx.Dialog):
 			ui.message("Action blocked: Stop music first")
 			return
 		try:
-			with wx.FileDialog(self, "Select Audio", wildcard="Audio Files|*.mp3;*.wav;*.ogg", style=wx.FD_OPEN) as fd:
+			with wx.FileDialog(self, "Select Audio", wildcard="Audio Files|*.mp3;*.wav;*.ogg;*.flac;*.m4a;*.wma", style=wx.FD_OPEN) as fd:
 				if fd.ShowModal() == wx.ID_CANCEL:
 					return
 				path = fd.GetPath()
@@ -196,8 +197,11 @@ class JamDialog(wx.Dialog):
 						self.playPauseBtn.SetFocus()
 				else:
 					ui.message(f"Load failed: {msg}")
-		except Exception as e:
-			ui.message(f"Error: {e}")
+		except (wx.PyDeadObjectError, wx.PyAssertionError) as e:
+			logger.error(f"UI Error in onLoad: {e}")
+		except (IOError, OSError) as e:
+			logger.error(f"File Error in onLoad: {e}")
+			ui.message(f"File Error: {e}")
 
 	def onPlayPause(self, event):
 		self.plugin.toggle_playback_logic()
@@ -212,8 +216,8 @@ class JamDialog(wx.Dialog):
 				self.update_ui_state()
 				if self.loadBtn.IsShown():
 					self.loadBtn.SetFocus()
-		except Exception as e:
-			ui.message(f"UI Error: {e}")
+		except (wx.PyDeadObjectError, wx.PyAssertionError) as e:
+			logger.error(f"UI Error in onStop: {e}")
 
 	def onMinimize(self, event):
 		"""Closes UI and keeps playback."""
@@ -251,7 +255,8 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 			try:
 				self.player = player.MusicPlayer()
 				return True
-			except Exception:
+			except (IOError, OSError, RuntimeError) as e:
+				logger.error(f"Failed to initialize MusicPlayer: {e}")
 				ui.message("Failed to initialize engine")
 				return False
 		return True
